@@ -27,6 +27,7 @@ class LocalRender implements IRender {
         return [
             "png",
             "svg",
+            "emf",
             "eps",
             "pdf",
             "vdx",
@@ -69,6 +70,20 @@ class LocalRender implements IRender {
         //but processes are all started at the begining, and recorded for later process.
         let pms = [...Array(diagram.pageCount).keys()].reduce(
             (pChain, index) => {
+                
+                // if the final output format is 'emf', generate an  'svg'
+                // first. We will deal with 'emf' later.
+                let origFormat = format;
+                if (format == "emf") {
+                    format = "svg";
+                    let savePathParsed = path.parse(savePath);
+                    savePath = path.format({
+                        dir: savePathParsed.dir,
+                        name: savePathParsed.name,
+                        ext: ".svg"
+                    });
+                }
+
                 let params = [
                     '-Djava.awt.headless=true',
                     '-jar',
@@ -111,6 +126,7 @@ class LocalRender implements IRender {
                 params.push(...config.jarArgs(diagram.parentUri));
                 let process : any = child_process.spawn(config.java, params);
                 processes.push(process);
+
                 return pChain.then(
                     () => {
 
@@ -128,7 +144,34 @@ class LocalRender implements IRender {
                         let pms = processWrapper(process, savePath2).then(
                             stdout => buffers.push(stdout),
                             err => Promise.reject(<RenderError>{ error: localize(10, null, diagram.title, err.error), out: err.out })
-                        );
+                        ).then(() => {
+                            if (origFormat == "emf") {
+                                // TODO(karl): make configurable, config.inscape object, similar to config.java
+                                let inkscape = "/usr/bin/inkscape";
+            
+                                // derive output path for the EMF file from the output path
+                                // of the SVG file
+                                let svgInputFile = path.parse(savePath2);
+                                let emfOutputFileName = path.format({
+                                    dir: svgInputFile.dir,
+                                    name: svgInputFile.name,
+                                    ext: ".emf"
+                                });
+                                
+                                let params = [
+                                    '--without-gui',
+                                    `--export-emf=${emfOutputFileName}`,
+                                    savePath2
+                                ];
+                                
+                                let process : any = child_process.spawn(inkscape, params);
+
+                                // TODO(karl): not very elegant ...
+                                console.log(`Generating EMF file: input=${savePath2}, output=${emfOutputFileName}`)
+                                child_process.execFileSync(inkscape, params);
+                                return "";
+                            }
+                         });
                         return pms;
                     },
                     err => {
